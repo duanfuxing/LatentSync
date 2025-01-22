@@ -363,36 +363,72 @@ class LipsyncPipeline(DiffusionPipeline):
             
             if abs(audio_duration - current_duration) > 0.1:
                 required_frames = int(audio_duration * target_fps)
-                # 转换为浮点类型
-                frames_tensor = torch.from_numpy(video_frames).cuda().float() / 255.0
+                
+                # 降低分辨率以节省内存
+                scale_factor = 0.5  # 将分辨率降低一半
+                h, w = int(video_frames.shape[1] * scale_factor), int(video_frames.shape[2] * scale_factor)
+                resized_frames = []
+                
+                # 分批处理视频帧
+                batch_size = 32
+                for i in range(0, len(video_frames), batch_size):
+                    batch = video_frames[i:i+batch_size]
+                    # 使用 opencv 调整大小
+                    batch_resized = np.stack([
+                        cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
+                        for frame in batch
+                    ])
+                    resized_frames.append(batch_resized)
+                
+                video_frames = np.concatenate(resized_frames, axis=0)
                 
                 if len(video_frames) < required_frames:
-                    if len(frames_tensor.shape) != 4:
-                        print(f"警告：输入视频帧维度不正确，当前维度: {frames_tensor.shape}")
-                        return video_frames
-                    
+                    # 分批处理插值
+                    frames_tensor = torch.from_numpy(video_frames).cuda().float() / 255.0
                     channels = []
+                    
                     for c in range(frames_tensor.shape[-1]):
                         channel = frames_tensor[..., c]
-                        channel_flat = channel.reshape(1, 1, -1)
+                        channel_batches = []
                         
-                        interpolated = torch.nn.functional.interpolate(
-                            channel_flat,
-                            size=required_frames,
-                            mode='linear',
-                            align_corners=False
-                        )
+                        # 分批处理每个通道
+                        for i in range(0, channel.shape[0], batch_size):
+                            batch = channel[i:i+batch_size]
+                            batch_flat = batch.reshape(1, -1, batch.shape[0])  # [1, H*W, T]
+                            
+                            interpolated = torch.nn.functional.interpolate(
+                                batch_flat,
+                                size=required_frames,
+                                mode='linear',
+                                align_corners=False
+                            )
+                            
+                            channel_batches.append(interpolated)
                         
-                        interpolated = interpolated.squeeze().reshape(
+                        # 合并批次结果
+                        channel_interpolated = torch.cat(channel_batches, dim=1)
+                        channel_interpolated = channel_interpolated.reshape(
                             required_frames,
                             frames_tensor.shape[1],
                             frames_tensor.shape[2]
                         )
-                        channels.append(interpolated)
+                        channels.append(channel_interpolated)
                     
                     # 合并通道并转回 uint8
                     interpolated = torch.stack(channels, dim=-1)
                     video_frames = (interpolated * 255.0).clamp(0, 255).to(torch.uint8).cpu().numpy()
+                    
+                    # 恢复原始分辨率
+                    final_frames = []
+                    for i in range(0, len(video_frames), batch_size):
+                        batch = video_frames[i:i+batch_size]
+                        batch_upscaled = np.stack([
+                            cv2.resize(frame, (video_frames.shape[2], video_frames.shape[1]), interpolation=cv2.INTER_LANCZOS4)
+                            for frame in batch
+                        ])
+                        final_frames.append(batch_upscaled)
+                    
+                    video_frames = np.concatenate(final_frames, axis=0)
                 else:
                     indices = torch.linspace(0, len(video_frames)-1, required_frames).long()
                     video_frames = video_frames[indices]
