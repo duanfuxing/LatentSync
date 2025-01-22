@@ -90,9 +90,13 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
     gr.Markdown(
         """
     # 基于ByteDance的LatentSync二次开发部署
-    增加了视频循环播放适应长语音问题、修复视频跳帧平滑过度
+    
+    > 主要改进：
+    > - 增加了视频循环播放适应长语音问题
+    > - 修复视频跳帧平滑过度问题
+    > - 优化了内存占用和处理速度
 
-    <div style="display:flex;justify-content:center;column-gap:4px;">
+    <div style="display:flex;justify-content:center;column-gap:4px;margin-top:20px;">
         <a href="https://github.com/duanfuxing/LatentSync">
             <img src='https://img.shields.io/badge/GitHub-Repo-blue'>
         </a> 
@@ -102,8 +106,8 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
 
     with gr.Row():
         with gr.Column():
-            video_input = gr.Video(label="Input Video")
-            audio_input = gr.Audio(label="Input Audio", type="filepath")
+            audio_input = gr.Audio(label="驱动音频", type="filepath")
+            video_input = gr.Video(label="参考视频")
 
             with gr.Row():
                 guidance_scale = gr.Slider(
@@ -111,17 +115,17 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
                     maximum=3.5,
                     value=1.5,
                     step=0.5,
-                    label="Guidance Scale",
+                    label="引导尺度",
                 )
-                inference_steps = gr.Slider(minimum=10, maximum=50, value=20, step=1, label="Inference Steps")
+                inference_steps = gr.Slider(minimum=10, maximum=50, value=20, step=1, label="推理步数")
 
             with gr.Row():
-                seed = gr.Number(value=1247, label="Random Seed", precision=0)
+                seed = gr.Number(value=1247, label="随机种子", precision=0)
 
-            process_btn = gr.Button("Process Video")
+            process_btn = gr.Button("开始推理")
 
         with gr.Column():
-            video_output = gr.Video(label="Output Video")
+            video_output = gr.Video(label="输出视频")
 
             gr.Examples(
                 examples=[
