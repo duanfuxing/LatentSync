@@ -359,45 +359,41 @@ class LipsyncPipeline(DiffusionPipeline):
             audio_duration = len(audio_samples) / audio_sample_rate
             current_duration = len(video_frames) / target_fps
             
-            # 打印输入视频帧的维度信息
             print(f"输入视频帧维度: {video_frames.shape}")
             
             if abs(audio_duration - current_duration) > 0.1:
                 required_frames = int(audio_duration * target_fps)
-                frames_tensor = torch.from_numpy(video_frames).cuda()
+                # 转换为浮点类型
+                frames_tensor = torch.from_numpy(video_frames).cuda().float() / 255.0
                 
                 if len(video_frames) < required_frames:
-                    # 确保视频帧维度正确 [T, H, W, C]
                     if len(frames_tensor.shape) != 4:
                         print(f"警告：输入视频帧维度不正确，当前维度: {frames_tensor.shape}")
                         return video_frames
                     
-                    # 分别处理每个通道
                     channels = []
                     for c in range(frames_tensor.shape[-1]):
-                        channel = frames_tensor[..., c]  # [T, H, W]
-                        # 重塑为 [1, 1, T] 形状用于线性插值
-                        channel_flat = channel.reshape(1, 1, -1)  # [1, 1, T]
+                        channel = frames_tensor[..., c]
+                        channel_flat = channel.reshape(1, 1, -1)
                         
                         interpolated = torch.nn.functional.interpolate(
                             channel_flat,
                             size=required_frames,
                             mode='linear',
                             align_corners=False
-                        )  # [1, 1, required_frames]
+                        )
                         
-                        # 恢复原始形状
                         interpolated = interpolated.squeeze().reshape(
                             required_frames,
                             frames_tensor.shape[1],
                             frames_tensor.shape[2]
-                        )  # [required_frames, H, W]
+                        )
                         channels.append(interpolated)
                     
-                    # 合并所有通道
-                    video_frames = torch.stack(channels, dim=-1).cpu().numpy()
+                    # 合并通道并转回 uint8
+                    interpolated = torch.stack(channels, dim=-1)
+                    video_frames = (interpolated * 255.0).clamp(0, 255).to(torch.uint8).cpu().numpy()
                 else:
-                    # 使用线性采样来减少帧数
                     indices = torch.linspace(0, len(video_frames)-1, required_frames).long()
                     video_frames = video_frames[indices]
             
