@@ -291,6 +291,88 @@ class LipsyncPipeline(DiffusionPipeline):
             out_frame = self.image_processor.restorer.restore_img(video_frames[index], face, affine_matrices[index])
             out_frames.append(out_frame)
         return np.stack(out_frames, axis=0)
+    
+    # 在视频帧之间进行插值，平滑过渡
+    def interpolate_frames(self, video_frames, target_fps, original_fps, batch_size=32):
+        # 使用 torch.cuda.amp.autocast() 启用自动混合精度
+        with torch.cuda.amp.autocast():
+            frames_tensor = torch.from_numpy(video_frames).cuda()
+            frames_tensor = frames_tensor.permute(3, 0, 1, 2)  # [C, T, H, W]
+            
+            # 使用更高效的插值模式
+            interpolated = torch.nn.functional.interpolate(
+                frames_tensor.unsqueeze(0),
+                size=(target_frames, video_frames.shape[1], video_frames.shape[2]),
+                mode='bilinear',  # 改用 bilinear 而不是 trilinear，更快且效果相近
+                align_corners=False
+            )
+        return interpolated.squeeze(0).permute(1, 2, 3, 0).cpu().numpy()
+
+    def smooth_transitions(self, video_frames, window_size=3):
+        with torch.cuda.amp.autocast():
+            frames = torch.from_numpy(video_frames).cuda().float()
+            
+            # 使用 3D 卷积代替逐通道处理
+            kernel_size = window_size * 2 + 1
+            gaussian_kernel = torch.exp(-torch.linspace(-window_size, window_size, kernel_size)**2 / (2 * (window_size/2)**2))
+            gaussian_kernel = (gaussian_kernel / gaussian_kernel.sum()).cuda()
+            
+            # 批量处理所有通道
+            frames = frames.permute(3, 0, 1, 2).unsqueeze(0)  # [1, C, T, H, W]
+            padding = (0, 0, 0, 0, window_size, window_size)
+            frames = torch.nn.functional.pad(frames, padding, mode='replicate')
+            
+            smoothed = torch.nn.functional.conv3d(
+                frames,
+                gaussian_kernel.view(1, 1, -1, 1, 1).expand(frames.size(1), -1, -1, 1, 1),
+                groups=frames.size(1),
+                padding=(0, 0, 0)
+            )
+            
+            smoothed = smoothed.squeeze(0).permute(1, 2, 3, 0)
+        
+        return torch.clamp(smoothed, 0, 255).to(torch.uint8).cpu().numpy()
+
+    def ensure_consistent_fps(self, video_frames, audio_samples, target_fps, audio_sample_rate):
+        with torch.cuda.amp.autocast():
+            audio_duration = len(audio_samples) / audio_sample_rate
+            current_duration = len(video_frames) / target_fps
+            
+            if abs(audio_duration - current_duration) > 0.1:
+                required_frames = int(audio_duration * target_fps)
+                frames_tensor = torch.from_numpy(video_frames).cuda()
+                
+                if len(video_frames) < required_frames:
+                    # 使用更高效的补帧方式
+                    frames_tensor = frames_tensor.permute(3, 0, 1, 2)
+                    interpolated = torch.nn.functional.interpolate(
+                        frames_tensor.unsqueeze(0),
+                        size=(required_frames, video_frames.shape[1], video_frames.shape[2]),
+                        mode='bilinear',
+                        align_corners=False
+                    )
+                    video_frames = interpolated.squeeze(0).permute(1, 2, 3, 0).cpu().numpy()
+                else:
+                    # 使用线性采样来减少帧数
+                    indices = torch.linspace(0, len(video_frames)-1, required_frames).long()
+                    video_frames = video_frames[indices]
+        
+        return video_frames
+
+    # 主函数：修复视频跳帧问题
+    def fix_video_frames(self, video_frames, audio_samples, target_fps, audio_sample_rate):
+        # 确保帧率一致性
+        video_frames = self.ensure_consistent_fps(video_frames, audio_samples, target_fps, audio_sample_rate)
+    
+        # 使用GPU加速的平滑过渡
+        video_frames = self.smooth_transitions(video_frames)
+    
+        # 确保帧数与音频长度匹配
+        required_frames = int(len(audio_samples) / audio_sample_rate * target_fps)
+        if len(video_frames) > required_frames:
+            video_frames = video_frames[:required_frames]
+    
+        return video_frames
 
     @torch.no_grad()
     def __call__(
@@ -327,6 +409,35 @@ class LipsyncPipeline(DiffusionPipeline):
 
         faces, original_video_frames, boxes, affine_matrices = self.affine_transform_video(video_path)
         audio_samples = read_audio(audio_path)
+
+        video_frames = read_video(video_path, use_decord=False)
+        original_video_frames = video_frames.copy()
+
+        audio_duration = len(audio_samples) / audio_sample_rate
+        video_duration = len(video_frames) / video_fps
+        print(f"音频长度: {audio_duration} seconds")
+        print(f"视频长度: {video_duration} seconds")
+
+        # 视频倒放补帧
+        if video_duration < audio_duration:
+            repeat_factor = int(np.ceil(audio_duration / video_duration))
+            print(f"视频长度小于音频长度，重复系数: {repeat_factor}")
+            
+            video_frames = np.tile(video_frames, (repeat_factor, 1, 1, 1))
+            original_video_frames = np.tile(original_video_frames, (repeat_factor, 1, 1, 1))
+            
+            faces = torch.tile(faces, (repeat_factor, 1, 1, 1))
+            boxes = boxes * repeat_factor
+            affine_matrices = affine_matrices * repeat_factor
+            print(f"扩展后的帧数:{video_frames.shape}")
+
+        # 然后再进行帧数的裁剪
+        required_frames = int(audio_duration * video_fps)
+        video_frames = video_frames[:required_frames]
+        original_video_frames = original_video_frames[:required_frames]
+        faces = faces[:required_frames]
+        boxes = boxes[:required_frames]
+        affine_matrices = affine_matrices[:required_frames]
 
         # 1. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
@@ -454,6 +565,16 @@ class LipsyncPipeline(DiffusionPipeline):
         # masked_video_frames = self.restore_video(
         #     torch.cat(masked_video_frames), original_video_frames, boxes, affine_matrices
         # )
+
+        print("视频跳帧开始处理")
+        # 处理视频跳帧
+        synced_video_frames = self.fix_video_frames(
+            video_frames=synced_video_frames,
+            audio_samples=audio_samples,
+            target_fps=self.video_fps,
+            audio_sample_rate = audio_sample_rate
+        )
+        print("视频跳帧处理结束")
 
         audio_samples_remain_length = int(synced_video_frames.shape[0] / video_fps * audio_sample_rate)
         audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()

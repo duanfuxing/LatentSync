@@ -157,4 +157,4 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(inbrowser=True, share=True)
+    demo.launch(inbrowser=True, share=True, server_port=6006)
