@@ -454,7 +454,7 @@ class LipsyncPipeline(DiffusionPipeline):
         return video_frames
 
     # 主函数：修复视频跳帧问题
-    def fix_video_frames(self, video_frames, audio_samples, target_fps, audio_sample_rate):
+    def fix_video_frames_old(self, video_frames, audio_samples, target_fps, audio_sample_rate):
         # 确保帧率一致性
         video_frames = self.ensure_consistent_fps(video_frames, audio_samples, target_fps, audio_sample_rate)
     
@@ -466,6 +466,85 @@ class LipsyncPipeline(DiffusionPipeline):
         if len(video_frames) > required_frames:
             video_frames = video_frames[:required_frames]
     
+        return video_frames
+
+        def calculate_optical_flow(self, frame1, frame2):
+        """计算两帧之间的光流"""
+        # 转换为灰度图
+        gray1 = cv2.cvtColor(frame1, cv2.COLOR_RGB2GRAY)
+        gray2 = cv2.cvtColor(frame2, cv2.COLOR_RGB2GRAY)
+        
+        flow = cv2.FarnebackOpticalFlow_create(
+            numLevels=5,
+            pyrScale=0.5,
+            winSize=15,
+            numIters=3
+        )
+        return flow.calc(gray1, gray2, None)
+
+    def interpolate_frames_with_flow(self, video_frames, target_fps, original_fps):
+        """使用光流法进行帧插值"""
+        n_frames = len(video_frames)
+        result_frames = []
+        
+        # 每次处理相邻的两帧
+        for i in range(n_frames - 1):
+            # 添加当前帧
+            result_frames.append(video_frames[i])
+            
+            # 计算这两帧之间需要插入的帧数
+            n_interp = max(1, int(target_fps / original_fps) - 1)
+            
+            # 计算光流
+            flow_mat = self.calculate_optical_flow(video_frames[i], video_frames[i+1])
+            
+            # 生成插值帧
+            h, w = video_frames[i].shape[:2]
+            for t in range(1, n_interp + 1):
+                t_factor = t / (n_interp + 1)
+                
+                # 创建映射网格
+                flow_map = np.zeros((h, w, 2), np.float32)
+                flow_map[..., 0] = (1 - t_factor) * flow_mat[..., 0]
+                flow_map[..., 1] = (1 - t_factor) * flow_mat[..., 1]
+                
+                # 使用重映射进行插值
+                intermediate = cv2.remap(
+                    video_frames[i],
+                    (np.float32(np.arange(w)) + flow_map[..., 0]).astype(np.float32),
+                    (np.float32(np.arange(h))[:, np.newaxis] + flow_map[..., 1]).astype(np.float32),
+                    cv2.INTER_LINEAR
+                )
+                result_frames.append(intermediate)
+        
+        result_frames.append(video_frames[-1])
+        return np.array(result_frames)
+
+    def fix_video_frames(self, video_frames, audio_samples, target_fps, audio_sample_rate):
+        """修复视频跳帧问题"""
+        print("开始处理视频跳帧...")
+        
+        # 计算目标持续时间
+        audio_duration = len(audio_samples) / audio_sample_rate
+        current_duration = len(video_frames) / target_fps
+        
+        if abs(audio_duration - current_duration) > 0.1:
+            # 使用光流法进行帧插值
+            video_frames = self.interpolate_frames_with_flow(
+                video_frames, 
+                target_fps,
+                len(video_frames) / current_duration
+            )
+        
+        # 使用滑动窗口进行平滑
+        video_frames = self.smooth_transitions(video_frames, window_size=5)
+        
+        # 确保帧数与音频长度匹配
+        required_frames = int(audio_duration * target_fps)
+        if len(video_frames) > required_frames:
+            video_frames = video_frames[:required_frames]
+        
+        print(f"视频跳帧处理完成，最终帧数: {len(video_frames)}")
         return video_frames
 
     @torch.no_grad()
