@@ -35,7 +35,7 @@ from ..utils.util import read_video, read_audio, write_video, check_ffmpeg_insta
 from ..whisper.audio2feature import Audio2Feature
 import tqdm
 import soundfile as sf
-from .CPUOptimizedInterpolator import CPUOptimizedInterpolator
+from .FrameInterpolator import FrameInterpolator
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -60,7 +60,7 @@ class LipsyncPipeline(DiffusionPipeline):
         super().__init__()
 
         # 初始化插值器
-        self.interpolator = CPUOptimizedInterpolator()
+        self.interpolator = FrameInterpolator()
 
         if hasattr(scheduler.config, "steps_offset") and scheduler.config.steps_offset != 1:
             deprecation_message = (
@@ -482,9 +482,8 @@ class LipsyncPipeline(DiffusionPipeline):
             # 使用 CPU 优化的插值器处理
             video_frames = self.interpolator.process_video(
                 video_frames=video_frames,
-                audio_duration=audio_duration, # 音频时长（秒）
-                target_fps=target_fps,         # 目标帧率
-                smooth_window=2                # 平滑窗口
+                audio_duration=audio_duration,  # 音频时长（秒）
+                target_fps=target_fps          # 目标帧率
             )
         
         # 确保帧数与音频长度匹配

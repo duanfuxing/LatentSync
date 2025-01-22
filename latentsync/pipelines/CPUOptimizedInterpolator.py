@@ -29,12 +29,12 @@ class CPUOptimizedInterpolator:
         
         # 创建光流计算器
         flow = cv2.FarnebackOpticalFlow_create(
-            numLevels=3,      # 降低计算复杂度
-            pyrScale=0.5,     
-            winSize=15,       
-            numIters=3,       
-            polyN=5,          
-            polySigma=1.2,    
+            numLevels=3,      # 金字塔层数
+            pyrScale=0.5,     # 金字塔缩放比例
+            winSize=15,       # 窗口大小
+            numIters=3,       # 迭代次数
+            polyN=5,          # 多项式展开阶数
+            polySigma=1.2,    # 高斯权重标准差
             flags=0
         )
         
