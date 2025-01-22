@@ -35,6 +35,7 @@ from ..utils.util import read_video, read_audio, write_video, check_ffmpeg_insta
 from ..whisper.audio2feature import Audio2Feature
 import tqdm
 import soundfile as sf
+from .GPUOptimizedInterpolator import GPUOptimizedInterpolator
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -57,6 +58,9 @@ class LipsyncPipeline(DiffusionPipeline):
         ],
     ):
         super().__init__()
+
+        # 初始化插值器
+        self.interpolator = GPUOptimizedInterpolator()
 
         if hasattr(scheduler.config, "steps_offset") and scheduler.config.steps_offset != 1:
             deprecation_message = (
@@ -486,11 +490,11 @@ class LipsyncPipeline(DiffusionPipeline):
             
             if abs(audio_duration - current_duration) > 0.1:
                 # 使用优化后的插值器处理
-                video_frames = interpolator.process_video(
+                video_frames = self.interpolator.process_video(
                     video_frames,
                     target_fps,
                     len(video_frames) / current_duration,
-                    smooth_window=3  # 可以根据需要调整
+                    smooth_window=3
                 )
             
             # 确保帧数与音频长度匹配
@@ -498,10 +502,8 @@ class LipsyncPipeline(DiffusionPipeline):
             if len(video_frames) > required_frames:
                 video_frames = video_frames[:required_frames]
             
+            print(f"视频跳帧处理完成，最终帧数: {len(video_frames)}")
             return video_frames
-        
-        print(f"视频跳帧处理完成，最终帧数: {len(video_frames)}")
-        return video_frames
 
     @torch.no_grad()
     def __call__(
