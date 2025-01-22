@@ -468,8 +468,8 @@ class LipsyncPipeline(DiffusionPipeline):
     
         return video_frames
 
-        def calculate_optical_flow(self, frame1, frame2):
-        """计算两帧之间的光流"""
+    # 计算两帧之间的光流
+    def calculate_optical_flow(self, frame1, frame2):
         # 转换为灰度图
         gray1 = cv2.cvtColor(frame1, cv2.COLOR_RGB2GRAY)
         gray2 = cv2.cvtColor(frame2, cv2.COLOR_RGB2GRAY)
@@ -520,8 +520,8 @@ class LipsyncPipeline(DiffusionPipeline):
         result_frames.append(video_frames[-1])
         return np.array(result_frames)
 
+    # 修复视频跳帧问题
     def fix_video_frames(self, video_frames, audio_samples, target_fps, audio_sample_rate):
-        """修复视频跳帧问题"""
         print("开始处理视频跳帧...")
         
         # 计算目标持续时间
