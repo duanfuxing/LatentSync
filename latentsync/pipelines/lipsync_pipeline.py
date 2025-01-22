@@ -572,15 +572,15 @@ class LipsyncPipeline(DiffusionPipeline):
         # )
 
         # 处理视频跳帧
-        if fix_frames:
-            print("视频跳帧开始处理")
-            synced_video_frames = self.fix_video_frames(
-                video_frames=synced_video_frames,
-                audio_samples=audio_samples,
-                target_fps=self.video_fps,
-                audio_sample_rate = audio_sample_rate
-            )
-            print(f"视频跳帧处理完成，最终帧数: {len(synced_video_frames)}")
+        # if fix_frames:
+        #     print("视频跳帧开始处理")
+        #     synced_video_frames = self.fix_video_frames(
+        #         video_frames=synced_video_frames,
+        #         audio_samples=audio_samples,
+        #         target_fps=self.video_fps,
+        #         audio_sample_rate = audio_sample_rate
+        #     )
+        #     print(f"视频跳帧处理完成，最终帧数: {len(synced_video_frames)}")
 
         audio_samples_remain_length = int(synced_video_frames.shape[0] / video_fps * audio_sample_rate)
         audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
