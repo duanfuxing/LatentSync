@@ -89,25 +89,13 @@ def create_args(
 with gr.Blocks(title="LatentSync Video Processing") as demo:
     gr.Markdown(
         """
-    # LatentSync: Audio Conditioned Latent Diffusion Models for Lip Sync
-    Upload a video and audio file to process with LatentSync model.
-
-    <div align="center">
-        <strong>Chunyu Li1,2  Chao Zhang1  Weikai Xu1  Jinghui Xie1,†  Weiguo Feng1
-        Bingyue Peng1  Weiwei Xing2,†</strong>
-    </div>
-
-    <div align="center">
-        <strong>1ByteDance   2Beijing Jiaotong University</strong>
-    </div>
+    # 基于ByteDance的LatentSync二次开发部署
+    增加了视频循环播放适应长语音问题、修复视频跳帧平滑过度
 
     <div style="display:flex;justify-content:center;column-gap:4px;">
-        <a href="https://github.com/bytedance/LatentSync">
+        <a href="https://github.com/duanfuxing/LatentSync">
             <img src='https://img.shields.io/badge/GitHub-Repo-blue'>
         </a> 
-        <a href="https://arxiv.org/pdf/2412.09262">
-            <img src='https://img.shields.io/badge/ArXiv-Paper-red'>
-        </a>
     </div>
     """
     )
