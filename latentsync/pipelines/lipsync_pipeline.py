@@ -9,6 +9,7 @@ import subprocess
 import numpy as np
 import torch
 import torchvision
+import torch.nn.functional as F
 
 from diffusers.utils import is_accelerate_available
 from packaging import version
@@ -325,7 +326,7 @@ class LipsyncPipeline(DiffusionPipeline):
         return extended_frames
 
     # 平滑过渡处理帧之间的转换
-    def smooth_transitions(self, video_frames, window_size=2, batch_size=4):
+    def smooth_transitions(video_frames, window_size=2, batch_size=4):
         with torch.cuda.amp.autocast():
             frames = torch.from_numpy(video_frames).cuda().float()
             
@@ -334,21 +335,28 @@ class LipsyncPipeline(DiffusionPipeline):
             gaussian_kernel = torch.exp(-torch.linspace(-window_size, window_size, kernel_size)**2 / (2 * (window_size/2)**2))
             gaussian_kernel = (gaussian_kernel / gaussian_kernel.sum()).cuda()
             
-            # 批量处理所有通道
-            frames = frames.permute(3, 0, 1, 2).unsqueeze(0)  # [1, C, T, H, W]
-            padding = (0, 0, 0, 0, window_size, window_size)
-            frames = torch.nn.functional.pad(frames, padding, mode='replicate')
+            # 分批处理所有通道
+            num_batches = len(frames) // batch_size + int(len(frames) % batch_size > 0)
+            smoothed_frames = []
             
-            smoothed = torch.nn.functional.conv3d(
-                frames,
-                gaussian_kernel.view(1, 1, -1, 1, 1).expand(frames.size(1), -1, -1, 1, 1),
-                groups=frames.size(1),
-                padding=(0, 0, 0)
-            )
+            for i in range(num_batches):
+                batch = frames[i*batch_size:(i+1)*batch_size].permute(3, 0, 1, 2).unsqueeze(0)  # [1, C, T, H, W]
+                padding = (0, 0, 0, 0, window_size, window_size)
+                batch = F.pad(batch, padding, mode='replicate')
+                
+                smoothed_batch = F.conv3d(
+                    batch,
+                    gaussian_kernel.view(1, 1, -1, 1, 1).expand(batch.size(1), -1, -1, 1, 1),
+                    groups=batch.size(1),
+                    padding=(0, 0, 0)
+                )
+                
+                smoothed_batch = smoothed_batch.squeeze(0).permute(1, 2, 3, 0)
+                smoothed_frames.append(smoothed_batch.cpu())
             
-            smoothed = smoothed.squeeze(0).permute(1, 2, 3, 0)
+            smoothed_frames = torch.cat(smoothed_frames, dim=0)
         
-        return torch.clamp(smoothed, 0, 255).to(torch.uint8).cpu().numpy()
+        return torch.clamp(smoothed_frames, 0, 255).to(torch.uint8).numpy()
 
     # 修复视频跳帧问题
     def fix_video_frames(self, video_frames, audio_samples, target_fps, audio_sample_rate):
