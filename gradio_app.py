@@ -117,8 +117,8 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
 
     with gr.Row():
         with gr.Column():
-            audio_input = gr.Audio(label="驱动音频", type="filepath")
             video_input = gr.Video(label="参考视频")
+            audio_input = gr.Audio(label="驱动音频", type="filepath")
 
             with gr.Row():
                 guidance_scale = gr.Slider(
