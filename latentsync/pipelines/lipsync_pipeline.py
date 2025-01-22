@@ -304,17 +304,28 @@ class LipsyncPipeline(DiffusionPipeline):
             channels = []
             for c in range(frames_tensor.shape[-1]):
                 channel = frames_tensor[..., c]
-                # 重塑为 [1, 1, H, W, T] 然后转换为 [1, 1, T, H, W]
-                channel = channel.permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
+                # 将通道重塑为 [batch_size, time] 形状
+                channel = channel.reshape(-1, n_frames)  # [H*W, T]
+                
+                # 使用线性插值
                 interpolated_channel = torch.nn.functional.interpolate(
-                    channel,
+                    channel.unsqueeze(0),  # [1, H*W, T]
                     size=target_frames,
-                    mode='linear',  # 使用线性插值
+                    mode='linear',
                     align_corners=False
                 )
-                channels.append(interpolated_channel.squeeze(0).squeeze(0).permute(1, 2, 0))
+                
+                # 恢复原始形状
+                interpolated_channel = interpolated_channel.squeeze(0)  # [H*W, T]
+                interpolated_channel = interpolated_channel.reshape(
+                    frames_tensor.shape[0],  # H
+                    frames_tensor.shape[1],  # W
+                    target_frames
+                )
+                channels.append(interpolated_channel)
             
-            interpolated = torch.stack(channels, dim=-1)
+            # 合并所有通道
+            interpolated = torch.stack(channels, dim=-1)  # [H, W, T, C]
             
         return interpolated.cpu().numpy()
 
