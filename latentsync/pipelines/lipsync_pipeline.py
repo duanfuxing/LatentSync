@@ -326,7 +326,7 @@ class LipsyncPipeline(DiffusionPipeline):
         return extended_frames
 
     # 平滑过渡处理帧之间的转换
-    def smooth_transitions(video_frames, window_size=2, batch_size=4):
+    def smooth_transitions(self, video_frames, window_size=2, batch_size=4):
         with torch.cuda.amp.autocast():
             frames = torch.from_numpy(video_frames).cuda().float()
             
