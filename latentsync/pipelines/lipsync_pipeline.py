@@ -296,43 +296,35 @@ class LipsyncPipeline(DiffusionPipeline):
             out_frames.append(out_frame)
         return np.stack(out_frames, axis=0)
     
-    # 在视频帧之间进行插值，平滑过渡
-    def interpolate_frames(self, video_frames, target_fps, original_fps, batch_size=32):
-        n_frames = len(video_frames)
-        target_frames = int((n_frames / original_fps) * target_fps)
+    # 视频倒放填充
+    def reverse_and_extend_video(self, video_frames, audio_duration, video_fps):
+        original_frames = video_frames.copy()
+        reversed_frames = np.flip(original_frames, axis=0)
         
-        with torch.cuda.amp.autocast():
-            frames_tensor = torch.from_numpy(video_frames).cuda()
-            
-            # 分别处理每个通道
-            channels = []
-            for c in range(frames_tensor.shape[-1]):
-                channel = frames_tensor[..., c]
-                # 将通道重塑为 [batch_size, time] 形状
-                channel = channel.reshape(-1, n_frames)  # [H*W, T]
-                
-                # 使用线性插值
-                interpolated_channel = torch.nn.functional.interpolate(
-                    channel.unsqueeze(0),  # [1, H*W, T]
-                    size=target_frames,
-                    mode='linear',
-                    align_corners=False
-                )
-                
-                # 恢复原始形状
-                interpolated_channel = interpolated_channel.squeeze(0)  # [H*W, T]
-                interpolated_channel = interpolated_channel.reshape(
-                    frames_tensor.shape[0],  # H
-                    frames_tensor.shape[1],  # W
-                    target_frames
-                )
-                channels.append(interpolated_channel)
-            
-            # 合并所有通道
-            interpolated = torch.stack(channels, dim=-1)  # [H, W, T, C]
-            
-        return interpolated.cpu().numpy()
+        # 计算需要重复的次数
+        video_duration = len(video_frames) / video_fps
+        repeat_times = int(np.ceil(audio_duration / (video_duration * 2)))  # *2 是因为正放+倒放
+        
+        extended_frames = []
+        for i in range(repeat_times):
+            if i % 2 == 0:
+                extended_frames.append(original_frames)
+            else:
+                extended_frames.append(reversed_frames)
+        
+        # 合并所有帧
+        extended_frames = np.concatenate(extended_frames, axis=0)
+        
+        # 使用平滑过渡处理帧之间的转换
+        extended_frames = self.smooth_transitions(extended_frames, window_size=5)
+        
+        # 裁剪到所需长度
+        required_frames = int(audio_duration * video_fps)
+        extended_frames = extended_frames[:required_frames]
+        
+        return extended_frames
 
+    # 平滑过渡处理帧之间的转换
     def smooth_transitions(self, video_frames, window_size=3):
         with torch.cuda.amp.autocast():
             frames = torch.from_numpy(video_frames).cuda().float()
@@ -357,120 +349,6 @@ class LipsyncPipeline(DiffusionPipeline):
             smoothed = smoothed.squeeze(0).permute(1, 2, 3, 0)
         
         return torch.clamp(smoothed, 0, 255).to(torch.uint8).cpu().numpy()
-
-    def ensure_consistent_fps(self, video_frames, audio_samples, target_fps, audio_sample_rate):
-        with torch.cuda.amp.autocast():
-            audio_duration = len(audio_samples) / audio_sample_rate
-            current_duration = len(video_frames) / target_fps
-            
-            print(f"输入视频帧维度: {video_frames.shape}")
-            
-            if abs(audio_duration - current_duration) > 0.1:
-                required_frames = int(audio_duration * target_fps)
-                
-                # 更激进地降低分辨率
-                scale_factor = 0.125  # 将分辨率降低到1/8
-                h, w = int(video_frames.shape[1] * scale_factor), int(video_frames.shape[2] * scale_factor)
-                
-                # 更小的批处理大小
-                batch_size = 8
-                chunk_size = 4  # 每次处理的区域大小
-                
-                # 分块处理视频帧降采样
-                resized_frames = []
-                for i in range(0, len(video_frames), batch_size):
-                    batch = video_frames[i:i+batch_size]
-                    batch_resized = np.stack([
-                        cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
-                        for frame in batch
-                    ])
-                    resized_frames.append(batch_resized)
-                    torch.cuda.empty_cache()
-                
-                video_frames = np.concatenate(resized_frames, axis=0)
-                
-                if len(video_frames) < required_frames:
-                    channels = []
-                    
-                    # 分通道处理
-                    for c in range(video_frames.shape[-1]):
-                        channel = video_frames[..., c]
-                        channel_interpolated = np.zeros((required_frames, h, w), dtype=np.float32)
-                        
-                        # 分块处理每个通道
-                        for y in range(0, h, chunk_size):
-                            for x in range(0, w, chunk_size):
-                                # 处理小块区域
-                                y_end = min(y + chunk_size, h)
-                                x_end = min(x + chunk_size, w)
-                                
-                                region = channel[:, y:y_end, x:x_end]
-                                region_tensor = torch.from_numpy(region).cuda().float() / 255.0
-                                
-                                # 重塑并插值
-                                region_flat = region_tensor.reshape(1, -1, region_tensor.shape[0])
-                                interpolated = torch.nn.functional.interpolate(
-                                    region_flat,
-                                    size=required_frames,
-                                    mode='linear',
-                                    align_corners=False
-                                )
-                                
-                                # 恢复形状并保存
-                                interpolated = interpolated.reshape(
-                                    required_frames, y_end-y, x_end-x
-                                )
-                                channel_interpolated[:, y:y_end, x:x_end] = interpolated.cpu().numpy()
-                                
-                                # 立即清理GPU内存
-                                del region_tensor, region_flat, interpolated
-                                torch.cuda.empty_cache()
-                        
-                        channels.append(channel_interpolated)
-                        torch.cuda.empty_cache()
-                    
-                    # 合并通道
-                    video_frames = np.stack(channels, axis=-1)
-                    video_frames = (video_frames * 255.0).clip(0, 255).astype(np.uint8)
-                    
-                    # 分块恢复原始分辨率
-                    final_height = video_frames.shape[1] * 8
-                    final_width = video_frames.shape[2] * 8
-                    final_frames = np.zeros((len(video_frames), final_height, final_width, 3), dtype=np.uint8)
-                    
-                    for i in range(0, len(video_frames), batch_size):
-                        batch = video_frames[i:i+batch_size]
-                        batch_upscaled = np.stack([
-                            cv2.resize(frame, (final_width, final_height), 
-                                     interpolation=cv2.INTER_LANCZOS4)
-                            for frame in batch
-                        ])
-                        final_frames[i:i+batch_size] = batch_upscaled
-                        torch.cuda.empty_cache()
-                    
-                    video_frames = final_frames
-                else:
-                    indices = torch.linspace(0, len(video_frames)-1, required_frames).long()
-                    video_frames = video_frames[indices]
-            
-            print(f"输出视频帧维度: {video_frames.shape}")
-        
-        return video_frames
-
-    # 修复视频跳帧问题-旧版本
-    def fix_video_frames_old(self, video_frames, audio_samples, target_fps, audio_sample_rate):
-        # 确保帧率一致性
-        video_frames = self.ensure_consistent_fps(video_frames, audio_samples, target_fps, audio_sample_rate)
-    
-        # 使用GPU加速的平滑过渡
-        video_frames = self.smooth_transitions(video_frames)
-    
-        # 确保帧数与音频长度匹配
-        required_frames = int(len(audio_samples) / audio_sample_rate * target_fps)
-        if len(video_frames) > required_frames:
-            video_frames = video_frames[:required_frames]
-    
-        return video_frames
 
     # 修复视频跳帧问题
     def fix_video_frames(self, video_frames, audio_samples, target_fps, audio_sample_rate):
@@ -532,32 +410,31 @@ class LipsyncPipeline(DiffusionPipeline):
 
         video_frames = read_video(video_path, use_decord=False)
         original_video_frames = video_frames.copy()
-
+        
         audio_duration = len(audio_samples) / audio_sample_rate
         video_duration = len(video_frames) / video_fps
-        print(f"音频长度: {audio_duration} seconds")
-        print(f"视频长度: {video_duration} seconds")
-
-        # 视频倒放补帧
+        
+        # 视频帧倒放填充
         if video_duration < audio_duration:
-            repeat_factor = int(np.ceil(audio_duration / video_duration))
-            print(f"视频长度小于音频长度，重复系数: {repeat_factor}")
+            print(f"音频长度: {audio_duration} seconds")
+            print(f"视频长度: {video_duration} seconds")
+            print(f"视频长度小于音频长度，使用倒放填充")
+            video_frames = self.reverse_and_extend_video(video_frames, audio_duration, video_fps)
+            original_video_frames = self.reverse_and_extend_video(original_video_frames, audio_duration, video_fps)
             
-            video_frames = np.tile(video_frames, (repeat_factor, 1, 1, 1))
-            original_video_frames = np.tile(original_video_frames, (repeat_factor, 1, 1, 1))
+            # 处理人脸特征
+            faces_numpy = faces.cpu().numpy()
+            faces_extended = self.reverse_and_extend_video(faces_numpy, audio_duration, video_fps)
+            faces = torch.from_numpy(faces_extended)
             
-            faces = torch.tile(faces, (repeat_factor, 1, 1, 1))
-            boxes = boxes * repeat_factor
-            affine_matrices = affine_matrices * repeat_factor
-            print(f"扩展后的帧数:{video_frames.shape}")
-
-        # 然后再进行帧数的裁剪
-        required_frames = int(audio_duration * video_fps)
-        video_frames = video_frames[:required_frames]
-        original_video_frames = original_video_frames[:required_frames]
-        faces = faces[:required_frames]
-        boxes = boxes[:required_frames]
-        affine_matrices = affine_matrices[:required_frames]
+            # 更新 boxes 和 affine_matrices
+            total_frames = len(video_frames)
+            boxes = boxes * (total_frames // len(boxes) + 1)
+            boxes = boxes[:total_frames]
+            affine_matrices = affine_matrices * (total_frames // len(affine_matrices) + 1)
+            affine_matrices = affine_matrices[:total_frames]
+            
+            print(f"扩展后的帧数: {video_frames.shape}")
 
         # 1. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
