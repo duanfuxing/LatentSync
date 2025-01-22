@@ -297,7 +297,6 @@ class LipsyncPipeline(DiffusionPipeline):
         n_frames = len(video_frames)
         target_frames = int((n_frames / original_fps) * target_fps)
         
-        # 直接在GPU上处理
         with torch.cuda.amp.autocast():
             frames_tensor = torch.from_numpy(video_frames).cuda()
             
@@ -305,16 +304,16 @@ class LipsyncPipeline(DiffusionPipeline):
             channels = []
             for c in range(frames_tensor.shape[-1]):
                 channel = frames_tensor[..., c]
-                # 使用 2D 插值
+                # 重塑为 [1, 1, H, W, T] 然后转换为 [1, 1, T, H, W]
+                channel = channel.permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
                 interpolated_channel = torch.nn.functional.interpolate(
-                    channel.unsqueeze(0).unsqueeze(0),  # 添加批次和通道维度 [1, 1, T, H, W]
-                    size=(target_frames, video_frames.shape[1]),
-                    mode='bilinear',
+                    channel,
+                    size=target_frames,
+                    mode='linear',  # 使用线性插值
                     align_corners=False
                 )
-                channels.append(interpolated_channel.squeeze(0).squeeze(0))
+                channels.append(interpolated_channel.squeeze(0).squeeze(0).permute(1, 2, 0))
             
-            # 合并所有通道
             interpolated = torch.stack(channels, dim=-1)
             
         return interpolated.cpu().numpy()
@@ -354,15 +353,21 @@ class LipsyncPipeline(DiffusionPipeline):
                 frames_tensor = torch.from_numpy(video_frames).cuda()
                 
                 if len(video_frames) < required_frames:
-                    # 使用更高效的补帧方式
-                    frames_tensor = frames_tensor.permute(3, 0, 1, 2)
-                    interpolated = torch.nn.functional.interpolate(
-                        frames_tensor.unsqueeze(0),
-                        size=(required_frames, video_frames.shape[1], video_frames.shape[2]),
-                        mode='bilinear',
-                        align_corners=False
-                    )
-                    video_frames = interpolated.squeeze(0).permute(1, 2, 3, 0).cpu().numpy()
+                    # 分别处理每个通道
+                    channels = []
+                    for c in range(frames_tensor.shape[-1]):
+                        channel = frames_tensor[..., c]
+                        # 重塑维度并进行插值
+                        channel = channel.permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
+                        interpolated = torch.nn.functional.interpolate(
+                            channel,
+                            size=required_frames,
+                            mode='linear',
+                            align_corners=False
+                        )
+                        channels.append(interpolated.squeeze(0).squeeze(0).permute(1, 2, 0))
+                    
+                    video_frames = torch.stack(channels, dim=-1).cpu().numpy()
                 else:
                     # 使用线性采样来减少帧数
                     indices = torch.linspace(0, len(video_frames)-1, required_frames).long()
