@@ -481,10 +481,10 @@ class LipsyncPipeline(DiffusionPipeline):
         if abs(audio_duration - current_duration) > 0.1:
             # 使用 CPU 优化的插值器处理
             video_frames = self.interpolator.process_video(
-                video_frames,
-                target_fps,
-                len(video_frames) / current_duration,
-                smooth_window=3
+                video_frames=frames,
+                audio_duration=audio_duration, # 音频时长（秒）
+                target_fps=target_fps,         # 目标帧率
+                smooth_window=2                # 平滑窗口
             )
         
         # 确保帧数与音频长度匹配
