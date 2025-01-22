@@ -15,6 +15,7 @@ def process_video(
     guidance_scale,
     inference_steps,
     seed,
+    fix_frames,
 ):
     # Create the temp directory if it doesn't exist
     output_dir = Path("./temp")
@@ -39,7 +40,7 @@ def process_video(
     )
 
     # Parse the arguments
-    args = create_args(video_path, audio_path, output_path, inference_steps, guidance_scale, seed)
+    args = create_args(video_path, audio_path, output_path, inference_steps, guidance_scale, seed, fix_frames)
 
     try:
         result = main(
@@ -54,7 +55,7 @@ def process_video(
 
 
 def create_args(
-    video_path: str, audio_path: str, output_path: str, inference_steps: int, guidance_scale: float, seed: int
+    video_path: str, audio_path: str, output_path: str, inference_steps: int, guidance_scale: float, seed: int, fix_frames: bool
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--inference_ckpt_path", type=str, required=True)
@@ -64,6 +65,7 @@ def create_args(
     parser.add_argument("--inference_steps", type=int, default=20)
     parser.add_argument("--guidance_scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=1247)
+    parser.add_argument("--fix_frames", type=bool, default=True)
 
     return parser.parse_args(
         [
@@ -81,6 +83,8 @@ def create_args(
             str(guidance_scale),
             "--seed",
             str(seed),
+            "--fix_frames",
+            str(fix_frames),
         ]
     )
 
@@ -128,6 +132,7 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
 
             with gr.Row():
                 seed = gr.Number(value=1247, label="随机种子", precision=0)
+                fix_frames = gr.Checkbox(value=True, label="启用跳帧修复", info="使用光流法修复视频跳帧问题")
 
             process_btn = gr.Button("开始推理")
 
@@ -151,6 +156,7 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
             guidance_scale,
             inference_steps,
             seed,
+            fix_frames,
         ],
         outputs=video_output,
     )

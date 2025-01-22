@@ -35,7 +35,7 @@ from ..utils.util import read_video, read_audio, write_video, check_ffmpeg_insta
 from ..whisper.audio2feature import Audio2Feature
 import tqdm
 import soundfile as sf
-from .GPUOptimizedInterpolator import GPUOptimizedInterpolator
+from .CPUOptimizedInterpolator import CPUOptimizedInterpolator
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -60,7 +60,7 @@ class LipsyncPipeline(DiffusionPipeline):
         super().__init__()
 
         # 初始化插值器
-        self.interpolator = GPUOptimizedInterpolator()
+        self.interpolator = CPUOptimizedInterpolator()
 
         if hasattr(scheduler.config, "steps_offset") and scheduler.config.steps_offset != 1:
             deprecation_message = (
@@ -474,36 +474,25 @@ class LipsyncPipeline(DiffusionPipeline):
 
     # 修复视频跳帧问题
     def fix_video_frames(self, video_frames, audio_samples, target_fps, audio_sample_rate):
-        print("开始处理视频跳帧...")
-        
         # 计算目标持续时间
         audio_duration = len(audio_samples) / audio_sample_rate
         current_duration = len(video_frames) / target_fps
         
         if abs(audio_duration - current_duration) > 0.1:
-            # 使用优化后的插值器处理
-            interpolator = GPUOptimizedInterpolator(device=self._execution_device)
-            
-            # 计算目标持续时间
-            audio_duration = len(audio_samples) / audio_sample_rate
-            current_duration = len(video_frames) / target_fps
-            
-            if abs(audio_duration - current_duration) > 0.1:
-                # 使用优化后的插值器处理
-                video_frames = self.interpolator.process_video(
-                    video_frames,
-                    target_fps,
-                    len(video_frames) / current_duration,
-                    smooth_window=3
-                )
-            
-            # 确保帧数与音频长度匹配
-            required_frames = int(audio_duration * target_fps)
-            if len(video_frames) > required_frames:
-                video_frames = video_frames[:required_frames]
-            
-            print(f"视频跳帧处理完成，最终帧数: {len(video_frames)}")
-            return video_frames
+            # 使用 CPU 优化的插值器处理
+            video_frames = self.interpolator.process_video(
+                video_frames,
+                target_fps,
+                len(video_frames) / current_duration,
+                smooth_window=3
+            )
+        
+        # 确保帧数与音频长度匹配
+        required_frames = int(audio_duration * target_fps)
+        if len(video_frames) > required_frames:
+            video_frames = video_frames[:required_frames]
+        
+        return video_frames
 
     @torch.no_grad()
     def __call__(
@@ -522,6 +511,7 @@ class LipsyncPipeline(DiffusionPipeline):
         weight_dtype: Optional[torch.dtype] = torch.float16,
         eta: float = 0.0,
         mask: str = "fix_mask",
+        fix_frames: bool = True,  # 启用跳帧修复
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
@@ -697,15 +687,16 @@ class LipsyncPipeline(DiffusionPipeline):
         #     torch.cat(masked_video_frames), original_video_frames, boxes, affine_matrices
         # )
 
-        print("视频跳帧开始处理")
         # 处理视频跳帧
-        synced_video_frames = self.fix_video_frames(
-            video_frames=synced_video_frames,
-            audio_samples=audio_samples,
-            target_fps=self.video_fps,
-            audio_sample_rate = audio_sample_rate
-        )
-        print("视频跳帧处理结束")
+        if fix_frames:
+            print("视频跳帧开始处理")
+            synced_video_frames = self.fix_video_frames(
+                video_frames=synced_video_frames,
+                audio_samples=audio_samples,
+                target_fps=self.video_fps,
+                audio_sample_rate = audio_sample_rate
+            )
+            print(f"视频跳帧处理完成，最终帧数: {len(synced_video_frames)}")
 
         audio_samples_remain_length = int(synced_video_frames.shape[0] / video_fps * audio_sample_rate)
         audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
