@@ -300,28 +300,39 @@ class LipsyncPipeline(DiffusionPipeline):
     # 视频倒放填充
     def reverse_and_extend_video(self, video_frames, audio_duration, video_fps):
         original_frames = video_frames.copy()
-        reversed_frames = np.flip(original_frames, axis=0)
         
-        # 计算需要重复的次数
-        video_duration = len(video_frames) / video_fps
-        repeat_times = int(np.ceil(audio_duration / (video_duration * 2)))  # *2 是因为正放+倒放
+        # 计算需要的总帧数
+        required_frames = int(audio_duration * video_fps)
+        current_frames = len(original_frames)
         
+        # 如果原始帧数足够，直接返回需要的帧数
+        if current_frames >= required_frames:
+            return original_frames[:required_frames]
+        
+        # 计算需要完整的正放+倒放循环次数
+        full_sequence_length = current_frames * 2  # 一次正放+倒放的总帧数
+        num_full_sequences = required_frames // full_sequence_length
+        remaining_frames = required_frames % full_sequence_length
+        
+        # 构建完整序列
         extended_frames = []
-        for i in range(repeat_times):
-            if i % 2 == 0:
-                extended_frames.append(original_frames)
+        for i in range(num_full_sequences):
+            extended_frames.append(original_frames)
+            extended_frames.append(np.flip(original_frames, axis=0))
+        
+        # 处理剩余帧数
+        if remaining_frames > 0:
+            if remaining_frames <= current_frames:
+                extended_frames.append(original_frames[:remaining_frames])
             else:
-                extended_frames.append(reversed_frames)
+                extended_frames.append(original_frames)
+                extended_frames.append(np.flip(original_frames, axis=0)[:remaining_frames-current_frames])
         
         # 合并所有帧
         extended_frames = np.concatenate(extended_frames, axis=0)
         
-        # 使用平滑过渡处理帧之间的转换
-        # extended_frames = self.smooth_transitions(extended_frames, window_size=5)
-        
-        # 裁剪到所需长度
-        required_frames = int(audio_duration * video_fps)
-        extended_frames = extended_frames[:required_frames]
+        # 应用平滑过渡
+        extended_frames = self.smooth_transitions(extended_frames, window_size=3, batch_size=8)
         
         return extended_frames
 
