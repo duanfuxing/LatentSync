@@ -294,19 +294,30 @@ class LipsyncPipeline(DiffusionPipeline):
     
     # 在视频帧之间进行插值，平滑过渡
     def interpolate_frames(self, video_frames, target_fps, original_fps, batch_size=32):
-        # 使用 torch.cuda.amp.autocast() 启用自动混合精度
+        n_frames = len(video_frames)
+        target_frames = int((n_frames / original_fps) * target_fps)
+        
+        # 直接在GPU上处理
         with torch.cuda.amp.autocast():
             frames_tensor = torch.from_numpy(video_frames).cuda()
-            frames_tensor = frames_tensor.permute(3, 0, 1, 2)  # [C, T, H, W]
             
-            # 使用更高效的插值模式
-            interpolated = torch.nn.functional.interpolate(
-                frames_tensor.unsqueeze(0),
-                size=(target_frames, video_frames.shape[1], video_frames.shape[2]),
-                mode='bilinear',  # 改用 bilinear 而不是 trilinear，更快且效果相近
-                align_corners=False
-            )
-        return interpolated.squeeze(0).permute(1, 2, 3, 0).cpu().numpy()
+            # 分别处理每个通道
+            channels = []
+            for c in range(frames_tensor.shape[-1]):
+                channel = frames_tensor[..., c]
+                # 使用 2D 插值
+                interpolated_channel = torch.nn.functional.interpolate(
+                    channel.unsqueeze(0).unsqueeze(0),  # 添加批次和通道维度 [1, 1, T, H, W]
+                    size=(target_frames, video_frames.shape[1]),
+                    mode='bilinear',
+                    align_corners=False
+                )
+                channels.append(interpolated_channel.squeeze(0).squeeze(0))
+            
+            # 合并所有通道
+            interpolated = torch.stack(channels, dim=-1)
+            
+        return interpolated.cpu().numpy()
 
     def smooth_transitions(self, video_frames, window_size=3):
         with torch.cuda.amp.autocast():
