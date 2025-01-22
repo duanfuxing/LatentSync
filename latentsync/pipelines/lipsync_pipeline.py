@@ -317,7 +317,7 @@ class LipsyncPipeline(DiffusionPipeline):
         extended_frames = np.concatenate(extended_frames, axis=0)
         
         # 使用平滑过渡处理帧之间的转换
-        extended_frames = self.smooth_transitions(extended_frames, window_size=5)
+        # extended_frames = self.smooth_transitions(extended_frames, window_size=5)
         
         # 裁剪到所需长度
         required_frames = int(audio_duration * video_fps)
