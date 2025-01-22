@@ -364,82 +364,87 @@ class LipsyncPipeline(DiffusionPipeline):
             if abs(audio_duration - current_duration) > 0.1:
                 required_frames = int(audio_duration * target_fps)
                 
-                # 进一步降低分辨率以节省内存
-                scale_factor = 0.25  # 将分辨率降低到1/4
+                # 更激进地降低分辨率
+                scale_factor = 0.125  # 将分辨率降低到1/8
                 h, w = int(video_frames.shape[1] * scale_factor), int(video_frames.shape[2] * scale_factor)
-                resized_frames = []
                 
-                # 减小批处理大小
-                batch_size = 16
+                # 更小的批处理大小
+                batch_size = 8
+                chunk_size = 4  # 每次处理的区域大小
+                
+                # 分块处理视频帧降采样
+                resized_frames = []
                 for i in range(0, len(video_frames), batch_size):
                     batch = video_frames[i:i+batch_size]
-                    # 使用 opencv 调整大小
                     batch_resized = np.stack([
                         cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
                         for frame in batch
                     ])
                     resized_frames.append(batch_resized)
-                    
-                    # 清理GPU内存
-                    if i % (batch_size * 4) == 0:
-                        torch.cuda.empty_cache()
+                    torch.cuda.empty_cache()
                 
                 video_frames = np.concatenate(resized_frames, axis=0)
                 
                 if len(video_frames) < required_frames:
-                    # 分批处理插值，每次只处理一个通道
                     channels = []
                     
+                    # 分通道处理
                     for c in range(video_frames.shape[-1]):
                         channel = video_frames[..., c]
                         channel_interpolated = np.zeros((required_frames, h, w), dtype=np.float32)
                         
-                        # 分批处理每个通道
-                        for i in range(0, h, batch_size):
-                            # 每次只处理一小块区域
-                            region = channel[:, i:i+batch_size, :]
-                            region_tensor = torch.from_numpy(region).cuda().float() / 255.0
-                            
-                            # 重塑并插值
-                            region_flat = region_tensor.reshape(1, -1, region_tensor.shape[0])
-                            interpolated = torch.nn.functional.interpolate(
-                                region_flat,
-                                size=required_frames,
-                                mode='linear',
-                                align_corners=False
-                            )
-                            
-                            # 恢复形状并保存
-                            interpolated = interpolated.reshape(required_frames, region_tensor.shape[1], -1)
-                            channel_interpolated[:, i:i+batch_size, :] = interpolated.cpu().numpy()
-                            
-                            # 清理GPU内存
-                            del region_tensor, region_flat, interpolated
-                            torch.cuda.empty_cache()
+                        # 分块处理每个通道
+                        for y in range(0, h, chunk_size):
+                            for x in range(0, w, chunk_size):
+                                # 处理小块区域
+                                y_end = min(y + chunk_size, h)
+                                x_end = min(x + chunk_size, w)
+                                
+                                region = channel[:, y:y_end, x:x_end]
+                                region_tensor = torch.from_numpy(region).cuda().float() / 255.0
+                                
+                                # 重塑并插值
+                                region_flat = region_tensor.reshape(1, -1, region_tensor.shape[0])
+                                interpolated = torch.nn.functional.interpolate(
+                                    region_flat,
+                                    size=required_frames,
+                                    mode='linear',
+                                    align_corners=False
+                                )
+                                
+                                # 恢复形状并保存
+                                interpolated = interpolated.reshape(
+                                    required_frames, y_end-y, x_end-x
+                                )
+                                channel_interpolated[:, y:y_end, x:x_end] = interpolated.cpu().numpy()
+                                
+                                # 立即清理GPU内存
+                                del region_tensor, region_flat, interpolated
+                                torch.cuda.empty_cache()
                         
                         channels.append(channel_interpolated)
+                        torch.cuda.empty_cache()
                     
                     # 合并通道
                     video_frames = np.stack(channels, axis=-1)
                     video_frames = (video_frames * 255.0).clip(0, 255).astype(np.uint8)
                     
-                    # 恢复原始分辨率
-                    final_frames = []
+                    # 分块恢复原始分辨率
+                    final_height = video_frames.shape[1] * 8
+                    final_width = video_frames.shape[2] * 8
+                    final_frames = np.zeros((len(video_frames), final_height, final_width, 3), dtype=np.uint8)
+                    
                     for i in range(0, len(video_frames), batch_size):
                         batch = video_frames[i:i+batch_size]
                         batch_upscaled = np.stack([
-                            cv2.resize(frame, 
-                                     (video_frames.shape[2] * 4, video_frames.shape[1] * 4), 
+                            cv2.resize(frame, (final_width, final_height), 
                                      interpolation=cv2.INTER_LANCZOS4)
                             for frame in batch
                         ])
-                        final_frames.append(batch_upscaled)
-                        
-                        # 清理内存
-                        if i % (batch_size * 4) == 0:
-                            torch.cuda.empty_cache()
+                        final_frames[i:i+batch_size] = batch_upscaled
+                        torch.cuda.empty_cache()
                     
-                    video_frames = np.concatenate(final_frames, axis=0)
+                    video_frames = final_frames
                 else:
                     indices = torch.linspace(0, len(video_frames)-1, required_frames).long()
                     video_frames = video_frames[indices]
