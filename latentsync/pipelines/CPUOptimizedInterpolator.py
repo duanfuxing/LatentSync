@@ -11,8 +11,8 @@ class CPUOptimizedInterpolator:
         # 默认使用 CPU 核心数的一半作为工作线程
         self.num_workers = num_workers or max(1, multiprocessing.cpu_count() // 2)
         # 批处理大小调整为较小值，适应 CPU 处理
-        self.batch_size = 16
-        self.chunk_size = 200  # 每次处理的帧数
+        self.batch_size = 8
+        self.chunk_size = 100  # 每次处理的帧数
         
     def interpolate_frames(self, 
                           video_frames: np.ndarray, 
