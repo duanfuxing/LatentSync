@@ -100,6 +100,14 @@ with gr.Blocks(title="LatentSync Video Processing") as demo:
     > - 增加了视频循环播放适应长语音问题
     > - 修复视频跳帧平滑过度问题
     > - 优化了内存占用和处理速度
+
+    ### 使用说明：
+    - 硬件要求：显存建议 ≥24GB
+    - 音频要求：采样率16000Hz，推荐使用 <a href="https://modelscope.cn/studios/iic/CosyVoice2-0.5B">CosyVoice2</a> 生成
+    - 视频要求：
+      - 分辨率：1080p
+      - 帧率：30fps
+      - 人脸要求：面部清晰、无遮挡
     """
     )
 
