@@ -482,8 +482,8 @@ class LipsyncPipeline(DiffusionPipeline):
         )
         return flow.calc(gray1, gray2, None)
 
+    # 使用光流法进行帧插值
     def interpolate_frames_with_flow(self, video_frames, target_fps, original_fps):
-        """使用光流法进行帧插值"""
         n_frames = len(video_frames)
         result_frames = []
         
