@@ -81,6 +81,7 @@ def main(config, args):
         num_frames=config.data.num_frames,
         num_inference_steps=args.inference_steps,
         guidance_scale=args.guidance_scale,
+        fix_frames=args.fix_frames,
         weight_dtype=dtype,
         width=config.data.resolution,
         height=config.data.resolution,
