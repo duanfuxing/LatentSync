@@ -82,6 +82,16 @@ LatentSync uses the [Whisper](https://github.com/openai/whisper) to convert mels
 Install the required packages and download the checkpoints via:
 
 ```bash
+conda create -y -n latentsync python=3.10.13
+
+conda init bash && source /root/.bashrc
+
+conda activate latentsync
+
+conda install -y -c conda-forge ffmpeg
+
+pip install -r requirements.txt
+
 source setup_env.sh
 ```
 
