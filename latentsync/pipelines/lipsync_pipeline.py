@@ -434,26 +434,26 @@ class LipsyncPipeline(DiffusionPipeline):
         video_duration = len(video_frames) / video_fps
         
         # 视频帧倒放填充
-        if video_duration < audio_duration:
-            print(f"音频长度: {audio_duration} seconds")
-            print(f"视频长度: {video_duration} seconds")
-            print(f"视频长度小于音频长度，使用倒放填充")
-            video_frames = self.reverse_and_extend_video(video_frames, audio_duration, video_fps)
-            original_video_frames = self.reverse_and_extend_video(original_video_frames, audio_duration, video_fps)
+        # if video_duration < audio_duration:
+        #     print(f"音频长度: {audio_duration} seconds")
+        #     print(f"视频长度: {video_duration} seconds")
+        #     print(f"视频长度小于音频长度，使用倒放填充")
+        #     video_frames = self.reverse_and_extend_video(video_frames, audio_duration, video_fps)
+        #     original_video_frames = self.reverse_and_extend_video(original_video_frames, audio_duration, video_fps)
             
-            # 处理人脸特征
-            faces_numpy = faces.cpu().numpy()
-            faces_extended = self.reverse_and_extend_video(faces_numpy, audio_duration, video_fps)
-            faces = torch.from_numpy(faces_extended)
+        #     # 处理人脸特征
+        #     faces_numpy = faces.cpu().numpy()
+        #     faces_extended = self.reverse_and_extend_video(faces_numpy, audio_duration, video_fps)
+        #     faces = torch.from_numpy(faces_extended)
             
-            # 更新 boxes 和 affine_matrices
-            total_frames = len(video_frames)
-            boxes = boxes * (total_frames // len(boxes) + 1)
-            boxes = boxes[:total_frames]
-            affine_matrices = affine_matrices * (total_frames // len(affine_matrices) + 1)
-            affine_matrices = affine_matrices[:total_frames]
+        #     # 更新 boxes 和 affine_matrices
+        #     total_frames = len(video_frames)
+        #     boxes = boxes * (total_frames // len(boxes) + 1)
+        #     boxes = boxes[:total_frames]
+        #     affine_matrices = affine_matrices * (total_frames // len(affine_matrices) + 1)
+        #     affine_matrices = affine_matrices[:total_frames]
             
-            print(f"扩展后的帧数: {video_frames.shape}")
+        #     print(f"扩展后的帧数: {video_frames.shape}")
 
         # 1. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
